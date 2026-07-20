@@ -64,7 +64,7 @@ class GameSocketService {
 
     const token = getAccessToken();
     // Chỉ lấy base không lấy /api/
-    const envUrl = import.meta.env.VITE_API_BASE_URL as string;
+    const envUrl = import.meta.env.VITE_SOCKET_URL as string;
     const socketBaseUrl = envUrl.replace(/\/api\/?$/, '')
 
     this.socket = io(`${socketBaseUrl}${GAME_NAMESPACE}`, {
