@@ -70,7 +70,7 @@ jobs:
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -P ${{ secrets.SERVER_PORT || 22 }} docker-compose.prod.yml ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -P ${{ secrets.SERVER_PORT || 22 }} docker-compose.prod.yml ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
       
       - name: Deploy containers over SSH
         env:
@@ -147,8 +147,10 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "${SERVER_DEPLOY_PATH:-$HOME/battleship-deploy}"
-          cd "${SERVER_DEPLOY_PATH:-$HOME/battleship-deploy}"
+          TARGET_DIR="${SERVER_DEPLOY_PATH:-$HOME/battleship-deploy}"
+          mkdir -p "$TARGET_DIR" || (sudo mkdir -p "$TARGET_DIR" && sudo chown -R $(whoami) "$TARGET_DIR")
+          mv /tmp/docker-compose.prod.yml "$TARGET_DIR/docker-compose.prod.yml"
+          cd "$TARGET_DIR"
           
           # Khởi tạo tệp môi trường cho Server
           cat > .env.production <<ENVEOF
