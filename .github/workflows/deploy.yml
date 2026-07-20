@@ -66,13 +66,7 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: Copy deploy files to server
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -P ${{ secrets.SERVER_PORT || 22 }} docker-compose.prod.yml ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
-      
-      - name: Deploy containers over SSH
+      - name: Generate .env.production and copy files to server
         env:
           SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/p_btship-server:latest
           PORT: ${{ vars.PORT }}
@@ -110,11 +104,8 @@ jobs:
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -p ${{ secrets.SERVER_PORT || 22 }} ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} << 'EOF'
           set -eu
-          
           missing_vars=""
 
           require_env() {
@@ -147,12 +138,6 @@ jobs:
             exit 1
           fi
 
-          TARGET_DIR="${SERVER_DEPLOY_PATH:-$HOME/battleship-deploy}"
-          mkdir -p "$TARGET_DIR" || (sudo mkdir -p "$TARGET_DIR" && sudo chown -R $(whoami) "$TARGET_DIR")
-          mv /tmp/docker-compose.prod.yml "$TARGET_DIR/docker-compose.prod.yml"
-          cd "$TARGET_DIR"
-          
-          # Khởi tạo tệp môi trường cho Server
           cat > .env.production <<ENVEOF
           SERVER_IMAGE=${SERVER_IMAGE}
           PORT=${PORT}
@@ -189,9 +174,26 @@ jobs:
           SHOPAIKEY_GENAI_BASE_URL=${SHOPAIKEY_GENAI_BASE_URL}
           SHOPAIKEY_GENAI_MODEL=${SHOPAIKEY_GENAI_MODEL}
           ENVEOF
+
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -P ${{ secrets.SERVER_PORT || 22 }} docker-compose.prod.yml .env.production ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:/tmp/
+      
+      - name: Deploy containers over SSH
+        env:
+          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -p ${{ secrets.SERVER_PORT || 22 }} ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} << 'EOF'
+          set -eu
+          
+          TARGET_DIR="${SERVER_DEPLOY_PATH:-$HOME/battleship-deploy}"
+          mkdir -p "$TARGET_DIR" || (sudo mkdir -p "$TARGET_DIR" && sudo chown -R $(whoami) "$TARGET_DIR")
+          mv /tmp/docker-compose.prod.yml "$TARGET_DIR/docker-compose.prod.yml"
+          mv /tmp/.env.production "$TARGET_DIR/.env.production"
+          cd "$TARGET_DIR"
           
           # Đăng nhập GHCR và kéo image mới nhất về máy nhà
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker compose --env-file .env.production -f docker-compose.prod.yml pull
 
           # Đảm bảo Database và Redis chạy trước
