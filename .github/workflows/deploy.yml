@@ -50,23 +50,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   deploy:
-    name: Deploy to home server
-    runs-on: ubuntu-latest
+    name: Deploy to home server (Self-Hosted Runner)
+    runs-on: self-hosted
     needs:
       - publish-server
     if: github.ref == 'refs/heads/main'
     steps:
-      - name: Checkout
+      - name: Checkout deploy files locally
         uses: actions/checkout@v4
 
-      - name: Connect to Tailscale VPN
-        uses: tailscale/github-action@v3
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
-
-      - name: Generate .env.production and copy files to server
+      - name: Generate .env.production locally on server
         env:
           SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/p_btship-server:latest
           PORT: ${{ vars.PORT }}
@@ -92,52 +85,18 @@ jobs:
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           CHAT_HISTORY_LIMIT: ${{ vars.CHAT_HISTORY_LIMIT }}
           CHAT_HISTORY_TTL_SECONDS: ${{ vars.CHAT_HISTORY_TTL_SECONDS }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHOPAIKEY_API_KEY: ${{ secrets.SHOPAIKEY_API_KEY }}
-          SHOPAIKEY_GENAI_BASE_URL: ${{ vars.SHOPAIKEY_GENAI_BASE_URL }}
-          SHOPAIKEY_GENAI_MODEL: ${{ vars.SHOPAIKEY_GENAI_MODEL }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          SHOPAIKEY_API_KEY: ${{ secrets.SHOPAIKEY_API_KEY }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
           REDIS_PORT: ${{ vars.REDIS_PORT }}
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SHOPAIKEY_GENAI_BASE_URL: ${{ vars.SHOPAIKEY_GENAI_BASE_URL }}
+          SHOPAIKEY_GENAI_MODEL: ${{ vars.SHOPAIKEY_GENAI_MODEL }}
         run: |
           set -eu
-          missing_vars=""
-
-          require_env() {
-            var_name="$1"
-            eval "var_value=\${$var_name-}"
-            if [ -z "$var_value" ]; then
-              echo "ERROR: Missing require env: $var_name" >&2
-              missing_vars="$missing_vars $var_name"
-            fi
-          }
-
-          for v in \
-            SERVER_IMAGE PORT CLIENT_URL DB_PORT \
-            DB_NAME DB_USER DB_PASSWORD \
-            JWT_SECRET JWT_REFRESH_SECRET \
-            ACCESS_TOKEN_EXPIRES_IN REFRESH_TOKEN_EXPIRES_IN \
-            REFRESH_TOKEN_ABSOLUTE_TTL_DAYS \
-            REFRESH_TOKEN_COOKIE_NAME REFRESH_TOKEN_COOKIE_MAX_AGE_MS \
-            COOKIE_SECURE COOKIE_SAME_SITE COOKIE_PATH COOKIE_DOMAIN \
-            DB_SYNCHRONIZE DB_LOGGING \
-            REDIS_DB REDIS_PASSWORD \
-            CHAT_HISTORY_LIMIT CHAT_HISTORY_TTL_SECONDS \
-            GHCR_USERNAME GHCR_TOKEN
-          do
-            require_env "$v"
-          done
-
-          if [ -n "$missing_vars" ]; then
-            echo "Deployment aborted. Missing envs:$missing_vars" >&2
-            exit 1
-          fi
-
           cat > .env.production <<ENVEOF
           SERVER_IMAGE=${SERVER_IMAGE}
           PORT=${PORT}
@@ -175,49 +134,24 @@ jobs:
           SHOPAIKEY_GENAI_MODEL=${SHOPAIKEY_GENAI_MODEL}
           ENVEOF
 
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -P ${{ secrets.SERVER_PORT || 22 }} docker-compose.prod.yml .env.production ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:/tmp/
-      
-      - name: Deploy containers over SSH
-        env:
-          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+      - name: Deploy containers locally using Docker Compose
         run: |
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -p ${{ secrets.SERVER_PORT || 22 }} ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} << 'EOF'
           set -eu
-          
-          TARGET_DIR="${SERVER_DEPLOY_PATH:-$HOME/battleship-deploy}"
-          mkdir -p "$TARGET_DIR" || (sudo mkdir -p "$TARGET_DIR" && sudo chown -R $(whoami) "$TARGET_DIR")
-          mv /tmp/docker-compose.prod.yml "$TARGET_DIR/docker-compose.prod.yml"
-          mv /tmp/.env.production "$TARGET_DIR/.env.production"
-          cd "$TARGET_DIR"
-          
-          # Tự động phát hiện nếu cần dùng sudo cho docker khi user chưa có quyền truy cập /var/run/docker.sock
           if docker ps >/dev/null 2>&1; then
             D="docker"
           else
-            echo "Khởi chạy docker với quyền sudo do socket yêu cầu quyền truy cập..."
             sudo usermod -aG docker $(whoami) 2>/dev/null || true
             D="sudo docker"
           fi
 
-          # Đăng nhập GHCR và kéo image mới nhất về máy nhà
           echo "${{ secrets.GITHUB_TOKEN }}" | $D login ghcr.io -u "${{ github.actor }}" --password-stdin
           $D compose --env-file .env.production -f docker-compose.prod.yml pull
 
-          # Đảm bảo Database và Redis chạy trước
           $D compose --env-file .env.production -f docker-compose.prod.yml up -d postgres
           $D compose --env-file .env.production -f docker-compose.prod.yml up -d --force-recreate redis
           
-          # Chạy TypeORM Migration tạo bảng
           $D compose --env-file .env.production -f docker-compose.prod.yml run --rm server npx typeorm -d dist/database/data-source.js migration:run
-
-          # Chạy Seed tạo tài khoản Admin mặc định (bỏ qua nếu đã có)
           $D compose --env-file .env.production -f docker-compose.prod.yml run --rm server node dist/database/seed.js
 
-          # Khởi động Backend
           $D compose --env-file .env.production -f docker-compose.prod.yml up -d server
-          
-          # Dọn dẹp cache image thừa tránh rác ổ cứng server nhà
           $D image prune -f
-          EOF
