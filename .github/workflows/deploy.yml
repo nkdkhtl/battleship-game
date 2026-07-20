@@ -192,23 +192,32 @@ jobs:
           mv /tmp/.env.production "$TARGET_DIR/.env.production"
           cd "$TARGET_DIR"
           
+          # Tự động phát hiện nếu cần dùng sudo cho docker khi user chưa có quyền truy cập /var/run/docker.sock
+          if docker ps >/dev/null 2>&1; then
+            D="docker"
+          else
+            echo "Khởi chạy docker với quyền sudo do socket yêu cầu quyền truy cập..."
+            sudo usermod -aG docker $(whoami) 2>/dev/null || true
+            D="sudo docker"
+          fi
+
           # Đăng nhập GHCR và kéo image mới nhất về máy nhà
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker compose --env-file .env.production -f docker-compose.prod.yml pull
+          echo "${{ secrets.GITHUB_TOKEN }}" | $D login ghcr.io -u "${{ github.actor }}" --password-stdin
+          $D compose --env-file .env.production -f docker-compose.prod.yml pull
 
           # Đảm bảo Database và Redis chạy trước
-          docker compose --env-file .env.production -f docker-compose.prod.yml up -d postgres
-          docker compose --env-file .env.production -f docker-compose.prod.yml up -d --force-recreate redis
+          $D compose --env-file .env.production -f docker-compose.prod.yml up -d postgres
+          $D compose --env-file .env.production -f docker-compose.prod.yml up -d --force-recreate redis
           
           # Chạy TypeORM Migration tạo bảng
-          docker compose --env-file .env.production -f docker-compose.prod.yml run --rm server npx typeorm -d dist/database/data-source.js migration:run
+          $D compose --env-file .env.production -f docker-compose.prod.yml run --rm server npx typeorm -d dist/database/data-source.js migration:run
 
           # Chạy Seed tạo tài khoản Admin mặc định (bỏ qua nếu đã có)
-          docker compose --env-file .env.production -f docker-compose.prod.yml run --rm server node dist/database/seed.js
+          $D compose --env-file .env.production -f docker-compose.prod.yml run --rm server node dist/database/seed.js
 
           # Khởi động Backend
-          docker compose --env-file .env.production -f docker-compose.prod.yml up -d server
+          $D compose --env-file .env.production -f docker-compose.prod.yml up -d server
           
           # Dọn dẹp cache image thừa tránh rác ổ cứng server nhà
-          docker image prune -f
+          $D image prune -f
           EOF
