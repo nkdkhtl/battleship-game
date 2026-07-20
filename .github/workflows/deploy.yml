@@ -81,17 +81,12 @@ jobs:
           echo "Cloudflared successfully listening on 0.0.0.0:2222 and detached from step process tree"
 
       - name: Copy deploy files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: 172.17.0.1
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 2222
-          source: docker-compose.prod.yml
-          target: ${{ secrets.SERVER_DEPLOY_PATH }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -P 2222 docker-compose.prod.yml ${{ secrets.SERVER_USERNAME }}@127.0.0.1:${{ secrets.SERVER_DEPLOY_PATH }}/
       
       - name: Deploy containers over SSH
-        uses: appleboy/ssh-action@v1.2.0
         env:
           SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/p_btship-server:latest
           PORT: ${{ vars.PORT }}
@@ -129,107 +124,101 @@ jobs:
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-
-        with:
-          host: 172.17.0.1
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 2222
-          envs: SERVER_IMAGE,PORT,CLIENT_URL,DB_PORT,DB_NAME,DB_USER,DB_PASSWORD,JWT_SECRET,JWT_REFRESH_SECRET,ACCESS_TOKEN_EXPIRES_IN,REFRESH_TOKEN_EXPIRES_IN,REFRESH_TOKEN_ABSOLUTE_TTL_DAYS,REFRESH_TOKEN_COOKIE_NAME,REFRESH_TOKEN_COOKIE_MAX_AGE_MS,COOKIE_SECURE,COOKIE_SAME_SITE,COOKIE_PATH,COOKIE_DOMAIN,DB_SYNCHRONIZE,DB_LOGGING,REDIS_DB,REDIS_PASSWORD,CHAT_HISTORY_LIMIT,CHAT_HISTORY_TTL_SECONDS,GHCR_USERNAME,GHCR_TOKEN,SHOPAIKEY_API_KEY,SHOPAIKEY_GENAI_BASE_URL,SHOPAIKEY_GENAI_MODEL,CLOUDINARY_API_KEY,CLOUDINARY_CLOUD_NAME,CLOUDINARY_API_SECRET,REDIS_PORT,ADMIN_USERNAME,ADMIN_EMAIL,ADMIN_PASSWORD
+          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key -p 2222 ${{ secrets.SERVER_USERNAME }}@127.0.0.1 << 'EOF'
+          set -eu
           
-          script: |
-            set -eu
-            
-            missing_vars=""
+          missing_vars=""
 
-            require_env() {
-              var_name="$1"
-              eval "var_value=\${$var_name-}"
-              if [ -z "$var_value"]; then
-                echo "ERROR: Missing require env: $var_name" >&2
-                missing_vars="$missing_vars $var_name"
-              fi
-            }
-
-            for v in \
-              SERVER_IMAGE PORT CLIENT_URL DB_PORT \
-              DB_NAME DB_USER DB_PASSWORD \
-              JWT_SECRET JWT_REFRESH_SECRET \
-              ACCESS_TOKEN_EXPIRES_IN REFRESH_TOKEN_EXPIRES_IN \
-              REFRESH_TOKEN_ABSOLUTE_TTL_DAYS \
-              REFRESH_TOKEN_COOKIE_NAME REFRESH_TOKEN_COOKIE_MAX_AGE_MS \
-              COOKIE_SECURE COOKIE_SAME_SITE COOKIE_PATH COOKIE_DOMAIN \
-              DB_SYNCHRONIZE DB_LOGGING \
-              REDIS_DB REDIS_PASSWORD \
-              CHAT_HISTORY_LIMIT CHAT_HISTORY_TTL_SECONDS \
-              GHCR_USERNAME GHCR_TOKEN
-            do
-              require_env "$v"
-            done
-
-            if [ -n "$missing_vars" ]; then
-              echo "Deployment aborted. Missing envs:$missing_vars" >&2
-              exit 1
+          require_env() {
+            var_name="$1"
+            eval "var_value=\${$var_name-}"
+            if [ -z "$var_value" ]; then
+              echo "ERROR: Missing require env: $var_name" >&2
+              missing_vars="$missing_vars $var_name"
             fi
+          }
 
-            mkdir -p "${{ secrets.SERVER_DEPLOY_PATH }}"
-            cd "${{ secrets.SERVER_DEPLOY_PATH }}"
-            
-            # Khởi tạo tệp môi trường cho Server
-            cat > .env.production <<EOF
-            SERVER_IMAGE=${SERVER_IMAGE}
-            PORT=${PORT}
-            CLIENT_URL=${CLIENT_URL}
-            DB_PORT=${DB_PORT}
-            DB_NAME=${DB_NAME}
-            DB_USER=${DB_USER}
-            DB_PASSWORD=${DB_PASSWORD}
-            JWT_SECRET=${JWT_SECRET}
-            JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-            ACCESS_TOKEN_EXPIRES_IN=${ACCESS_TOKEN_EXPIRES_IN}
-            REFRESH_TOKEN_EXPIRES_IN=${REFRESH_TOKEN_EXPIRES_IN}
-            REFRESH_TOKEN_ABSOLUTE_TTL_DAYS=${REFRESH_TOKEN_ABSOLUTE_TTL_DAYS}
-            REFRESH_TOKEN_COOKIE_NAME=${REFRESH_TOKEN_COOKIE_NAME}
-            REFRESH_TOKEN_COOKIE_MAX_AGE_MS=${REFRESH_TOKEN_COOKIE_MAX_AGE_MS}
-            COOKIE_SECURE=${COOKIE_SECURE}
-            COOKIE_SAME_SITE=${COOKIE_SAME_SITE}
-            COOKIE_PATH=${COOKIE_PATH}
-            COOKIE_DOMAIN=${COOKIE_DOMAIN}
-            DB_SYNCHRONIZE=${DB_SYNCHRONIZE}
-            DB_LOGGING=${DB_LOGGING}
-            REDIS_DB=${REDIS_DB}
-            REDIS_PASSWORD=${REDIS_PASSWORD}
-            CHAT_HISTORY_LIMIT=${CHAT_HISTORY_LIMIT}
-            CHAT_HISTORY_TTL_SECONDS=${CHAT_HISTORY_TTL_SECONDS}
-            CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
-            SHOPAIKEY_API_KEY=${SHOPAIKEY_API_KEY}
-            CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
-            CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
-            REDIS_PORT=${REDIS_PORT}
-            ADMIN_USERNAME=${ADMIN_USERNAME}
-            ADMIN_EMAIL=${ADMIN_EMAIL}
-            ADMIN_PASSWORD=${ADMIN_PASSWORD}
-            SHOPAIKEY_GENAI_BASE_URL=${SHOPAIKEY_GENAI_BASE_URL}
-            SHOPAIKEY_GENAI_MODEL=${SHOPAIKEY_GENAI_MODEL}
-            EOF
-            
-            # Đăng nhập GHCR và kéo image mới nhất về máy nhà
-            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            docker compose --env-file .env.production -f docker-compose.prod.yml pull
+          for v in \
+            SERVER_IMAGE PORT CLIENT_URL DB_PORT \
+            DB_NAME DB_USER DB_PASSWORD \
+            JWT_SECRET JWT_REFRESH_SECRET \
+            ACCESS_TOKEN_EXPIRES_IN REFRESH_TOKEN_EXPIRES_IN \
+            REFRESH_TOKEN_ABSOLUTE_TTL_DAYS \
+            REFRESH_TOKEN_COOKIE_NAME REFRESH_TOKEN_COOKIE_MAX_AGE_MS \
+            COOKIE_SECURE COOKIE_SAME_SITE COOKIE_PATH COOKIE_DOMAIN \
+            DB_SYNCHRONIZE DB_LOGGING \
+            REDIS_DB REDIS_PASSWORD \
+            CHAT_HISTORY_LIMIT CHAT_HISTORY_TTL_SECONDS \
+            GHCR_USERNAME GHCR_TOKEN
+          do
+            require_env "$v"
+          done
 
-            # Đảm bảo Database và Redis chạy trước
-            docker compose --env-file .env.production -f docker-compose.prod.yml up -d postgres
-            docker compose --env-file .env.production -f docker-compose.prod.yml up -d --force-recreate redis
-            
-            # Chạy TypeORM Migration tạo bảng (Bắt buộc phải check lại đúng đường dẫn data-source.js)
-            docker compose --env-file .env.production -f docker-compose.prod.yml run --rm server npx typeorm -d dist/database/data-source.js migration:run
+          if [ -n "$missing_vars" ]; then
+            echo "Deployment aborted. Missing envs:$missing_vars" >&2
+            exit 1
+          fi
 
-            # Chạy Seed tạo tài khoản Admin mặc định (bỏ qua nếu đã có)
-            docker compose --env-file .env.production -f docker-compose.prod.yml run --rm server node dist/database/seed.js
+          mkdir -p "${SERVER_DEPLOY_PATH:-$HOME/battleship-deploy}"
+          cd "${SERVER_DEPLOY_PATH:-$HOME/battleship-deploy}"
+          
+          # Khởi tạo tệp môi trường cho Server
+          cat > .env.production <<ENVEOF
+          SERVER_IMAGE=${SERVER_IMAGE}
+          PORT=${PORT}
+          CLIENT_URL=${CLIENT_URL}
+          DB_PORT=${DB_PORT}
+          DB_NAME=${DB_NAME}
+          DB_USER=${DB_USER}
+          DB_PASSWORD=${DB_PASSWORD}
+          JWT_SECRET=${JWT_SECRET}
+          JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+          ACCESS_TOKEN_EXPIRES_IN=${ACCESS_TOKEN_EXPIRES_IN}
+          REFRESH_TOKEN_EXPIRES_IN=${REFRESH_TOKEN_EXPIRES_IN}
+          REFRESH_TOKEN_ABSOLUTE_TTL_DAYS=${REFRESH_TOKEN_ABSOLUTE_TTL_DAYS}
+          REFRESH_TOKEN_COOKIE_NAME=${REFRESH_TOKEN_COOKIE_NAME}
+          REFRESH_TOKEN_COOKIE_MAX_AGE_MS=${REFRESH_TOKEN_COOKIE_MAX_AGE_MS}
+          COOKIE_SECURE=${COOKIE_SECURE}
+          COOKIE_SAME_SITE=${COOKIE_SAME_SITE}
+          COOKIE_PATH=${COOKIE_PATH}
+          COOKIE_DOMAIN=${COOKIE_DOMAIN}
+          DB_SYNCHRONIZE=${DB_SYNCHRONIZE}
+          DB_LOGGING=${DB_LOGGING}
+          REDIS_DB=${REDIS_DB}
+          REDIS_PASSWORD=${REDIS_PASSWORD}
+          CHAT_HISTORY_LIMIT=${CHAT_HISTORY_LIMIT}
+          CHAT_HISTORY_TTL_SECONDS=${CHAT_HISTORY_TTL_SECONDS}
+          CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+          SHOPAIKEY_API_KEY=${SHOPAIKEY_API_KEY}
+          CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+          CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+          REDIS_PORT=${REDIS_PORT}
+          ADMIN_USERNAME=${ADMIN_USERNAME}
+          ADMIN_EMAIL=${ADMIN_EMAIL}
+          ADMIN_PASSWORD=${ADMIN_PASSWORD}
+          SHOPAIKEY_GENAI_BASE_URL=${SHOPAIKEY_GENAI_BASE_URL}
+          SHOPAIKEY_GENAI_MODEL=${SHOPAIKEY_GENAI_MODEL}
+          ENVEOF
+          
+          # Đăng nhập GHCR và kéo image mới nhất về máy nhà
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+          docker compose --env-file .env.production -f docker-compose.prod.yml pull
 
-            # Khởi động Backend
-            docker compose --env-file .env.production -f docker-compose.prod.yml up -d server
-            
-            # Dọn dẹp cache image thừa tránh rác ổ cứng server nhà
-            docker image prune -f
+          # Đảm bảo Database và Redis chạy trước
+          docker compose --env-file .env.production -f docker-compose.prod.yml up -d postgres
+          docker compose --env-file .env.production -f docker-compose.prod.yml up -d --force-recreate redis
+          
+          # Chạy TypeORM Migration tạo bảng
+          docker compose --env-file .env.production -f docker-compose.prod.yml run --rm server npx typeorm -d dist/database/data-source.js migration:run
 
+          # Chạy Seed tạo tài khoản Admin mặc định (bỏ qua nếu đã có)
+          docker compose --env-file .env.production -f docker-compose.prod.yml run --rm server node dist/database/seed.js
+
+          # Khởi động Backend
+          docker compose --env-file .env.production -f docker-compose.prod.yml up -d server
+          
+          # Dọn dẹp cache image thừa tránh rác ổ cứng server nhà
+          docker image prune -f
+          EOF
