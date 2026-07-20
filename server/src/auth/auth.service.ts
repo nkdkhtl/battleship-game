@@ -38,7 +38,7 @@ export class AuthService {
     @Inject(PASSWORD_HASHER_REPOSITORY)
     private readonly passwordHasher: IPasswordHasherRepository,
     private readonly configService: ConfigService,
-  ) {}
+  ) { }
 
   async register(dto: RegisterDto): Promise<AuthServiceResult> {
     const existingByEmail = await this.userRepository.findByEmail(dto.email);
