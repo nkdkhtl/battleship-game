@@ -65,7 +65,7 @@ jobs:
           docker run -d --network host --name cloudflared-tunnel \
             cloudflare/cloudflared:latest access tcp \
             --hostname ${{ secrets.SERVER_HOST }} \
-            --listener 127.0.0.1:2222
+            --listener 0.0.0.0:2222
           
           # Chờ 5 giây để container pull và thiết lập xong TCP socket
           sleep 5
@@ -78,12 +78,12 @@ jobs:
             docker logs cloudflared-tunnel
             exit 1
           fi
-          echo "Cloudflared successfully listening on 127.0.0.1:2222 and detached from step process tree"
+          echo "Cloudflared successfully listening on 0.0.0.0:2222 and detached from step process tree"
 
       - name: Copy deploy files to server
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: 127.0.0.1
+          host: 172.17.0.1
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 2222
@@ -131,7 +131,7 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
 
         with:
-          host: 127.0.0.1
+          host: 172.17.0.1
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 2222
