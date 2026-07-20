@@ -61,25 +61,24 @@ jobs:
 
       - name: Install and start Cloudflare Tunnel for SSH
         run: |
-          echo "Installing cloudflared..."
-          curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared.deb
+          echo "Starting cloudflared access tcp tunnel via Docker background container..."
+          docker run -d --network host --name cloudflared-tunnel \
+            cloudflare/cloudflared:latest access tcp \
+            --hostname ${{ secrets.SERVER_HOST }} \
+            --listener 127.0.0.1:2222
           
-          echo "Starting cloudflared access tcp tunnel to ${{ secrets.SERVER_HOST }} on 127.0.0.1:2222..."
-          nohup cloudflared access tcp --hostname ${{ secrets.SERVER_HOST }} --listener 127.0.0.1:2222 > /tmp/cloudflared.log 2>&1 &
+          # Chờ 5 giây để container pull và thiết lập xong TCP socket
+          sleep 5
           
-          # Chờ 3 giây để tunnel proxy thiết lập xong TCP socket
-          sleep 3
-          
-          echo "=== Cloudflared Logs ==="
-          cat /tmp/cloudflared.log || true
+          echo "=== Cloudflared Container Logs ==="
+          docker logs cloudflared-tunnel || true
           
           if ! ss -tuln | grep -q ":2222"; then
             echo "ERROR: Port 2222 is not open! Cloudflared failed to start or connect."
-            cat /tmp/cloudflared.log
+            docker logs cloudflared-tunnel
             exit 1
           fi
-          echo "Cloudflared successfully listening on 127.0.0.1:2222"
+          echo "Cloudflared successfully listening on 127.0.0.1:2222 and detached from step process tree"
 
       - name: Copy deploy files to server
         uses: appleboy/scp-action@v0.1.7
